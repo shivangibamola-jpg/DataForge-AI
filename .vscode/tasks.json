@@ -1,0 +1,56 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Clean Ports 8080 & 3000",
+      "type": "shell",
+      "command": "lsof -ti :8080 -ti :3000 | xargs kill -9 2>/dev/null || true",
+      "problemMatcher": []
+    },
+    {
+      "label": "Start Backend (FastAPI)",
+      "type": "shell",
+      "command": "cd backend && source venv/bin/activate && uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Started server process",
+          "endsPattern": "Uvicorn running on"
+        }
+      }
+    },
+    {
+      "label": "Start Frontend (Vite)",
+      "type": "shell",
+      "command": "cd frontend && npm run dev -- --port 3000",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "VITE",
+          "endsPattern": "ready in"
+        }
+      }
+    },
+    {
+      "label": "Start DataForge AI Platform",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "Start Backend (FastAPI)",
+        "Start Frontend (Vite)"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
