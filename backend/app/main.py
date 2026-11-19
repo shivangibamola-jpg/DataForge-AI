@@ -64,19 +64,26 @@ async def upload_file(file: UploadFile = File(...)):
 @app.post("/api/load_sample")
 def load_sample(sample_name: str = Query("manufacturing")):
     """Quickly loads built-in realistic business samples."""
-    # Resolve relative to project root
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    sample_files = {
-        "manufacturing": os.path.join(base_dir, "sample_data", "manufacturing_operations.csv"),
-        "logistics": os.path.join(base_dir, "sample_data", "supply_chain_multi_sheet.xlsx")
+    sample_filenames = {
+        "manufacturing": "manufacturing_operations.csv",
+        "logistics": "supply_chain_multi_sheet.xlsx"
     }
-    path = sample_files.get(sample_name)
-    if not path or not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"Sample dataset not found at {path}")
+    filename = sample_filenames.get(sample_name)
+    if not filename:
+        raise HTTPException(status_code=404, detail=f"Unknown sample name '{sample_name}'")
+
+    candidate_paths = [
+        project_root / "sample_data" / filename,
+        backend_dir / "sample_data" / filename,
+        Path(__file__).resolve().parent / "sample_data" / filename,
+    ]
+
+    path = next((p for p in candidate_paths if p.is_file()), None)
+    if not path:
+        raise HTTPException(status_code=404, detail=f"Sample dataset not found at any candidate location")
 
     with open(path, "rb") as f:
         content = f.read()
-    filename = os.path.basename(path)
     res = store.load_file(content, filename)
     return {"success": True, "data": res}
 
