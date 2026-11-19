@@ -317,3 +317,25 @@ def get_column_stats(dataset_id: str, column: str, sheet: Optional[str] = None):
 
     stats = compute_column_stats(df[column])
     return {"success": True, "column": column, "data": stats}
+
+# Serve production frontend if built (e.g. inside Docker or production build)
+frontend_dist = project_root / "frontend" / "dist"
+if not frontend_dist.is_dir():
+    frontend_dist = Path("/app/frontend/dist")
+
+if frontend_dist.is_dir() and (frontend_dist / "index.html").is_file():
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse
+
+    if (frontend_dist / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi.json") or full_path.startswith("redoc"):
+            raise HTTPException(status_code=404, detail="API route not found")
+        file_path = frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(frontend_dist / "index.html")
+

@@ -2,32 +2,62 @@ import { DatasetMetadata, AnomalyItem, BusinessRuleItem, RuleViolationItem, Char
 
 // In development, talk directly to the backend to avoid dev-server proxy socket errors.
 // In production or custom environments, respect VITE_API_BASE_URL.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL !== undefined 
-  ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '') 
+const rawBaseUrl = import.meta.env.VITE_API_BASE_URL;
+const BASE_URL = (rawBaseUrl !== undefined && rawBaseUrl.trim() !== '')
+  ? rawBaseUrl.trim().replace(/\/+$/, '') 
   : (import.meta.env.DEV ? 'http://127.0.0.1:8080' : '');
+
+async function requestJson<T = any>(url: string, init?: RequestInit, fallbackMsg = 'Request failed'): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (err: any) {
+    throw new Error(
+      `Cannot connect to backend server at "${url}". ${
+        !import.meta.env.DEV && (!rawBaseUrl || rawBaseUrl.trim() === '')
+          ? 'When deployed on Vercel, set VITE_API_BASE_URL in your Vercel Project Settings to your live backend service URL (e.g. Render / Railway).'
+          : 'Please verify the backend server is running and accessible.'
+      }`
+    );
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    if (res.status === 404) {
+      throw new Error(
+        `Backend endpoint not found (404). If deploying frontend on Vercel, set VITE_API_BASE_URL in your Vercel Project Settings to your deployed backend URL (e.g. https://your-backend.onrender.com).`
+      );
+    }
+    const snippet = await res.text().catch(() => '');
+    throw new Error(
+      `Expected JSON from backend but received status ${res.status}. ${
+        snippet.includes('<!DOCTYPE') || snippet.includes('<html')
+          ? 'The server returned an HTML page instead of API JSON. Ensure your API URL is correct.'
+          : snippet.slice(0, 100)
+      }`
+    );
+  }
+
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json.detail || json.message || `${fallbackMsg} (status ${res.status})`);
+  }
+  return json;
+}
 
 export const api = {
   async loadSample(sampleName: 'manufacturing' | 'logistics'): Promise<DatasetMetadata> {
-    const res = await fetch(`${BASE_URL}/api/load_sample?sample_name=${sampleName}`, { method: 'POST' });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Failed to load sample');
+    const json = await requestJson(`${BASE_URL}/api/load_sample?sample_name=${sampleName}`, { method: 'POST' });
     return json.data;
   },
 
   async uploadFile(file: File): Promise<DatasetMetadata> {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${BASE_URL}/api/upload`, {
+    const json = await requestJson(`${BASE_URL}/api/upload`, {
       method: 'POST',
       body: formData,
-    });
-    let json: any = {};
-    try {
-      json = await res.json();
-    } catch {
-      throw new Error(`Server returned ${res.status} ${res.statusText}. Please verify the backend server is running.`);
-    }
-    if (!res.ok) throw new Error(json.detail || 'Upload failed');
+    }, 'Upload failed');
     return json.data;
   },
 
@@ -35,19 +65,15 @@ export const api = {
     const formData = new FormData();
     formData.append('dataset_id', datasetId);
     formData.append('sheet_name', sheetName);
-    const res = await fetch(`${BASE_URL}/api/switch_sheet`, {
+    const json = await requestJson(`${BASE_URL}/api/switch_sheet`, {
       method: 'POST',
       body: formData,
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Sheet switch failed');
+    }, 'Sheet switch failed');
     return json.data;
   },
 
   async getPreview(datasetId: string, page = 1, pageSize = 20) {
-    const res = await fetch(`${BASE_URL}/api/preview?dataset_id=${datasetId}&page=${page}&page_size=${pageSize}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Preview fetch failed');
+    const json = await requestJson(`${BASE_URL}/api/preview?dataset_id=${datasetId}&page=${page}&page_size=${pageSize}`, undefined, 'Preview fetch failed');
     return json.data;
   },
 
@@ -73,58 +99,44 @@ export const api = {
     if (params?.groupBy && params.groupBy !== '') qp.append('group_by', params.groupBy);
     if (params?.contamination) qp.append('contamination', String(params.contamination));
 
-    const res = await fetch(`${BASE_URL}/api/anomalies?${qp.toString()}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Anomaly analysis failed');
+    const json = await requestJson(`${BASE_URL}/api/anomalies?${qp.toString()}`, undefined, 'Anomaly analysis failed');
     return json.data;
   },
 
   async evaluateRules(datasetId: string, rules: BusinessRuleItem[], exceptions: any[]) {
-    const res = await fetch(`${BASE_URL}/api/rules/evaluate`, {
+    const json = await requestJson(`${BASE_URL}/api/rules/evaluate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dataset_id: datasetId, rules, exceptions }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Rules evaluation failed');
+    }, 'Rules evaluation failed');
     return json.data;
   },
 
   async getVisualizations(datasetId: string): Promise<ChartRecommendation[]> {
-    const res = await fetch(`${BASE_URL}/api/visualizations?dataset_id=${datasetId}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Charts fetch failed');
+    const json = await requestJson(`${BASE_URL}/api/visualizations?dataset_id=${datasetId}`, undefined, 'Charts fetch failed');
     return json.charts;
   },
 
   async getPredictAndInsights(datasetId: string) {
-    const res = await fetch(`${BASE_URL}/api/predict_and_insights?dataset_id=${datasetId}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Predictive analysis failed');
+    const json = await requestJson(`${BASE_URL}/api/predict_and_insights?dataset_id=${datasetId}`, undefined, 'Predictive analysis failed');
     return json.data;
   },
 
   async transformData(datasetId: string, rules: any[]) {
-    const res = await fetch(`${BASE_URL}/api/transform`, {
+    return await requestJson(`${BASE_URL}/api/transform`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dataset_id: datasetId, rules }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Transformation failed');
-    return json;
+    }, 'Transformation failed');
   },
 
   async revertTransform(datasetId: string) {
     const formData = new FormData();
     formData.append('dataset_id', datasetId);
-    const res = await fetch(`${BASE_URL}/api/revert_transform`, {
+    return await requestJson(`${BASE_URL}/api/revert_transform`, {
       method: 'POST',
       body: formData,
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Revert failed');
-    return json;
+    }, 'Revert failed');
   },
 
   async universalSearch(params: {
@@ -152,9 +164,7 @@ export const api = {
     if (params.column && params.column !== 'all') qp.append('column', params.column);
     if (params.sortBy) qp.append('sort_by', params.sortBy);
 
-    const res = await fetch(`${BASE_URL}/api/search?${qp.toString()}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Search query failed');
+    const json = await requestJson(`${BASE_URL}/api/search?${qp.toString()}`, undefined, 'Search query failed');
     return json.data;
   },
 
@@ -165,9 +175,7 @@ export const api = {
     });
     if (sheet && sheet !== 'all') qp.append('sheet', sheet);
 
-    const res = await fetch(`${BASE_URL}/api/column_stats?${qp.toString()}`);
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.detail || 'Failed to fetch column statistics');
+    const json = await requestJson(`${BASE_URL}/api/column_stats?${qp.toString()}`, undefined, 'Failed to fetch column statistics');
     return json.data;
   },
 
@@ -178,62 +186,46 @@ export const api = {
     async analyzeWorkbook(file: File) {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch(`${BASE_URL}/api/studio/analyze`, {
+      return await requestJson(`${BASE_URL}/api/studio/analyze`, {
         method: 'POST',
         body: formData,
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to analyze workbook');
-      return json;
+      }, 'Failed to analyze workbook');
     },
 
     async analyzeSample(sampleName = 'logistics') {
-      const res = await fetch(`${BASE_URL}/api/studio/analyze_sample?sample_name=${encodeURIComponent(sampleName)}`, {
-        method: 'POST',
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to analyze sample');
-      return json;
+      return await requestJson(
+        `${BASE_URL}/api/studio/analyze_sample?sample_name=${encodeURIComponent(sampleName)}`,
+        { method: 'POST' },
+        'Failed to analyze sample'
+      );
     },
 
     async generateApp(payload: { cache_id: string; app_name?: string; description?: string; blueprint?: any }) {
-      const res = await fetch(`${BASE_URL}/api/studio/generate`, {
+      return await requestJson(`${BASE_URL}/api/studio/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to generate application');
-      return json;
+      }, 'Failed to generate application');
     },
 
     async listApps() {
-      const res = await fetch(`${BASE_URL}/api/studio/apps`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to list applications');
+      const json = await requestJson(`${BASE_URL}/api/studio/apps`, undefined, 'Failed to list applications');
       return json.apps;
     },
 
     async getApp(appId: string) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to load application');
+      const json = await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}`, undefined, 'Failed to load application');
       return json.app;
     },
 
     async deleteApp(appId: string) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}`, {
+      return await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}`, {
         method: 'DELETE',
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to delete application');
-      return json;
+      }, 'Failed to delete application');
     },
 
     async getDashboard(appId: string) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/dashboard`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to load app dashboard');
+      const json = await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/dashboard`, undefined, 'Failed to load app dashboard');
       return json.dashboard;
     },
 
@@ -256,74 +248,57 @@ export const api = {
       if (params?.search) qp.append('search', params.search);
       if (params?.sortBy) qp.append('sort_by', params.sortBy);
 
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records?${qp.toString()}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to fetch records');
+      const json = await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records?${qp.toString()}`, undefined, 'Failed to fetch records');
       return json.data;
     },
 
     async getRecord(appId: string, entityName: string, recordId: string) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records/${encodeURIComponent(recordId)}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to fetch record details');
+      const json = await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records/${encodeURIComponent(recordId)}`, undefined, 'Failed to fetch record details');
       return json.data;
     },
 
     async createRecord(appId: string, entityName: string, data: any) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records`, {
+      const json = await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to create record');
+      }, 'Failed to create record');
       return json.record;
     },
 
     async updateRecord(appId: string, entityName: string, recordId: string, data: any) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records/${encodeURIComponent(recordId)}`, {
+      const json = await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records/${encodeURIComponent(recordId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to update record');
+      }, 'Failed to update record');
       return json.record;
     },
 
     async deleteRecord(appId: string, entityName: string, recordId: string) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records/${encodeURIComponent(recordId)}`, {
+      return await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/records/${encodeURIComponent(recordId)}`, {
         method: 'DELETE',
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to delete record');
-      return json;
+      }, 'Failed to delete record');
     },
 
     async addField(appId: string, entityName: string, fieldDef: { name: string; label?: string; type: string; required?: boolean; options?: string[] }) {
-      const res = await fetch(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/fields`, {
+      const json = await requestJson(`${BASE_URL}/api/studio/apps/${encodeURIComponent(appId)}/entities/${encodeURIComponent(entityName)}/fields`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fieldDef),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to add field');
+      }, 'Failed to add field');
       return json.field;
     },
 
     async getTemplates() {
-      const res = await fetch(`${BASE_URL}/api/studio/templates`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to fetch templates');
+      const json = await requestJson(`${BASE_URL}/api/studio/templates`, undefined, 'Failed to fetch templates');
       return json.templates;
     },
 
     async instantiateTemplate(templateId: string) {
-      const res = await fetch(`${BASE_URL}/api/studio/templates/${encodeURIComponent(templateId)}/instantiate`, {
+      const json = await requestJson(`${BASE_URL}/api/studio/templates/${encodeURIComponent(templateId)}/instantiate`, {
         method: 'POST',
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.detail || 'Failed to launch template application');
+      }, 'Failed to launch template application');
       return json.app;
     },
 
