@@ -112,6 +112,22 @@ PYTHONPATH=backend backend/venv/bin/python3 -m unittest backend/tests/test_api.p
 
 ---
 
+## ☁️ Cloud Deployment (Vercel + Render)
+
+DataForge AI is pre-configured for modern two-tier cloud deployment:
+
+- **Frontend (Vercel)**:
+  - Framework: Vite / React SPA
+  - Built with `frontend/vercel.json` rewrites for client-side routing.
+  - Connects to backend via environment variable: `VITE_API_BASE_URL`.
+
+- **Backend (Render / Railway / Cloud Run)**:
+  - Runtime: Python 3.11 (`.python-version` & `runtime.txt`)
+  - Server: FastAPI / Uvicorn with auto-port binding via `render.yaml`.
+  - Machine learning engines (Scikit-Learn, Pandas, NumPy) with pre-compiled wheels.
+
+---
+
 ## 🐳 Docker Deployment
 
 A multi-stage container specification is provided for single-command production deployment:
